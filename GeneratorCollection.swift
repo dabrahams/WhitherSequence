@@ -1,6 +1,5 @@
 // swift -parse-stdlib -Xfrontend -disable-access-control SequenceToCollection.swift
 import Swift
-import Dispatch
 extension ManagedBuffer {
     @_inlineable
     public final class func unsafeCreateUninitialized(
@@ -12,19 +11,18 @@ extension ManagedBuffer {
     }
 }
 
-public final class GeneratorBuffer<T> : ManagedBuffer<(), T> {
+public final class GeneratorBuffer<T>
+  : ManagedBuffer<GeneratorBuffer.Header, T> {
     public static func create(
         minimumCapacity: Int,
         first: T,
         rest: ()->T?
         ) -> GeneratorBuffer {
-        let r = unsafeCreateUninitialized(
+        let r = super.create(
             minimumCapacity: minimumCapacity
-            ) as! GeneratorBuffer
+        ) { _ in Header(_next: nil, access: 0, count: 0) }
+        as! GeneratorBuffer
         
-        withUnsafeMutablePointer(to: &r._next) { $0.initialize(to: nil) }
-        withUnsafeMutablePointer(to: &r.access) { $0.initialize(to: 0) }
-        withUnsafeMutablePointer(to: &r.count) { $0.initialize(to: 0) }
         r.fill(first: first, rest: rest)
         return r
     }
@@ -33,7 +31,7 @@ public final class GeneratorBuffer<T> : ManagedBuffer<(), T> {
     
     deinit {
         _ = withUnsafeMutablePointerToElements {
-            $0.deinitialize(count: count)
+            $0.deinitialize(count: header.count)
         }
     }
     
@@ -48,7 +46,7 @@ public final class GeneratorBuffer<T> : ManagedBuffer<(), T> {
                 n += 1
             }
         }
-        self.count = n
+        self.header.count = n
     }
     
     private func address<T>(
@@ -67,23 +65,23 @@ public final class GeneratorBuffer<T> : ManagedBuffer<(), T> {
             var context: Context = (
                 thisBuffer: Unmanaged.passUnretained(self).toOpaque(),
                 initNext: { rawSelf in
-                    let myself = Unmanaged<GeneratorBuffer>.fromOpaque(rawSelf)
+                    let me = Unmanaged<GeneratorBuffer>.fromOpaque(rawSelf)
                         .takeUnretainedValue()
                     
                     if let first = generator() {
-                        myself._next = GeneratorBuffer.create(
-                            minimumCapacity: myself.count,
+                        me.header._next = GeneratorBuffer.create(
+                            minimumCapacity: me.header.count,
                             first: first, rest: generator
                         )
                     }
                     else {
-                        myself._next = unsafeBitCast(
+                        me.header._next = unsafeBitCast(
                             emptyBuffer, to: GeneratorBuffer<T>.self)
                     }
                 }
             )
 
-            withUnsafeMutablePointer(to: &access) { aPtr in
+            withUnsafeMutablePointer(to: &header.access) { aPtr in
                 withUnsafeMutablePointer(to: &context) { cPtr in
                     Builtin.onceWithContext(
                         aPtr._rawValue,
@@ -93,22 +91,23 @@ public final class GeneratorBuffer<T> : ManagedBuffer<(), T> {
                         },
                         cPtr._rawValue
                     )
-                    
                 }
             }
         }
-        return _next!
+        return header._next!
     }
-    
-    var _next: GeneratorBuffer?
-    var access: Int
-    var count: Int
+
+    struct Header {
+        var _next: GeneratorBuffer?
+        var access: Int
+        var count: Int
+    }
 }
 
 extension GeneratorBuffer where T == Void {
     static func makeEmpty() -> GeneratorBuffer {
         let r = create(minimumCapacity: 1, first: ()) { return nil }
-        r.count = 0
+        r.header.count = 0
         return r
     }
 }
@@ -149,12 +148,12 @@ public struct GeneratorCollection<T> : Collection {
     
     public func formIndex(after i: inout Index) {
         i.offsetInBuffer += 1
-        if i.offsetInBuffer < i.buffer.count { return }
+        if i.offsetInBuffer < i.buffer.header.count { return }
 
         if let nextBuffer = false // isKnownUniquelyReferenced(&i.buffer)
-            ? i.buffer._next : i.buffer.next(from: generator)
+            ? i.buffer.header._next : i.buffer.next(from: generator)
         {
-            if nextBuffer.count == 0 {
+            if nextBuffer.header.count == 0 {
                 i = endIndex
             }
             else {
@@ -172,7 +171,7 @@ public struct GeneratorCollection<T> : Collection {
             i.bufferNumber += 1
         }
         else {
-            i.buffer._next = endIndex.buffer
+            i.buffer.header._next = endIndex.buffer
             i = endIndex
         }
     }
