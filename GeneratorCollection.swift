@@ -82,17 +82,21 @@ public final class GeneratorBuffer<T> : ManagedBuffer<(), T> {
                     }
                 }
             )
-            
-            Builtin.onceWithContext(
-                address(of: &self.access)._rawValue,
-                { rawContextPtr in
-                    let context = UnsafePointer<Context>(rawContextPtr).pointee
-                    context.initNext(context.thisBuffer)
-                },
-                address(of: &context)._rawValue
-            )
+
+            withUnsafeMutablePointer(to: &access) { aPtr in
+                withUnsafeMutablePointer(to: &context) { cPtr in
+                    Builtin.onceWithContext(
+                        aPtr._rawValue,
+                        { rawContextPtr in
+                            let context = UnsafePointer<Context>(rawContextPtr).pointee
+                            context.initNext(context.thisBuffer)
+                        },
+                        cPtr._rawValue
+                    )
+                    
+                }
+            }
         }
-        _fixLifetime(self)
         return _next!
     }
     
@@ -111,8 +115,8 @@ extension GeneratorBuffer where T == Void {
 
 let emptyBuffer = GeneratorBuffer<Void>.makeEmpty()
 
-struct GeneratorCollection<T> : Collection {
-    struct Index {
+public struct GeneratorCollection<T> : Collection {
+    public struct Index {
         var bufferNumber: UInt = UInt.max
         var offsetInBuffer: Int = 0
         var buffer: GeneratorBuffer<T>
@@ -121,7 +125,7 @@ struct GeneratorCollection<T> : Collection {
     
     static func emptyGenerator() -> T? { return nil }
     
-    init(generator: @escaping ()->T?) {
+    public init(generator: @escaping ()->T?) {
         guard let first = generator() else {
             self.generator = GeneratorCollection.emptyGenerator
             self.startIndex = Index()
@@ -137,13 +141,13 @@ struct GeneratorCollection<T> : Collection {
         )
     }
     
-    let startIndex: Index
+    public let startIndex: Index
     
-    var endIndex: Index {
+    public var endIndex: Index {
         return Index()
     }
     
-    func formIndex(after i: inout Index) {
+    public func formIndex(after i: inout Index) {
         i.offsetInBuffer += 1
         if i.offsetInBuffer < i.buffer.count { return }
 
@@ -173,13 +177,13 @@ struct GeneratorCollection<T> : Collection {
         }
     }
     
-    func index(after i: Index) -> Index {
+    public func index(after i: Index) -> Index {
         var j = i
         formIndex(after: &j)
         return j
     }
     
-    subscript(i: Index) -> T {
+    public subscript(i: Index) -> T {
         return i.buffer.withUnsafeMutablePointerToElements {
             $0[i.offsetInBuffer]
         }
@@ -189,14 +193,14 @@ struct GeneratorCollection<T> : Collection {
 }
 
 extension GeneratorCollection.Index : Comparable {
-    static func == (
+    public static func == (
         l: GeneratorCollection.Index, r: GeneratorCollection.Index
     ) -> Bool {
         return (l.bufferNumber, l.offsetInBuffer) ==
             (r.bufferNumber, r.offsetInBuffer)
     }
     
-    static func < (
+    public static func < (
         l: GeneratorCollection.Index, r: GeneratorCollection.Index
     ) -> Bool {
         return (l.bufferNumber, l.offsetInBuffer) <
@@ -205,7 +209,7 @@ extension GeneratorCollection.Index : Comparable {
 }
 
 func makeGenerator() -> ()->Int? {
-    var i = (0...10).makeIterator()
+    var i = (0...100).makeIterator()
     return { i.next() }
 }
 
