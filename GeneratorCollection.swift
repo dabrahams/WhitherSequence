@@ -49,12 +49,6 @@ public final class GeneratorBuffer<T>
         self.header.count = n
     }
     
-    private func address<T>(
-        of x: inout T
-        ) -> UnsafeMutablePointer<T> {
-        return withUnsafeMutablePointer(to: &x) { $0 }
-    }
-    
     func next(from generator: ()->T?) -> GeneratorBuffer {
         typealias Context = (
             thisBuffer: UnsafeMutableRawPointer,
