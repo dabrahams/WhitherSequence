@@ -199,11 +199,10 @@ public struct GeneratorCollection<T> : Collection {
         fileprivate var segment = GeneratorBuffer<T>.emptyBuffer
     }
 
-    public struct Slice_ {
+    public struct SubSequence {
         public private(set) var startIndex, endIndex: Index
         public private(set) var generator: ()->T?
     }
-    public typealias SubSequence = Slice_
     
     static func emptyGenerator() -> T? { return nil }
     
@@ -247,8 +246,8 @@ public struct GeneratorCollection<T> : Collection {
         }
     }
 
-    public subscript(bounds: Range<Index>) -> Slice_ {
-        return Slice_(
+    public subscript(bounds: Range<Index>) -> SubSequence {
+        return SubSequence(
             startIndex: bounds.lowerBound,
             endIndex: bounds.upperBound,
             generator: generator
@@ -263,10 +262,10 @@ public struct GeneratorCollection<T> : Collection {
     let generator: ()->T?
 }
 
-extension GeneratorCollection.Slice_ : Collection {
+extension GeneratorCollection.SubSequence : Collection {
     public typealias Index = GeneratorCollection.Index
     public typealias Element = T
-    public typealias SubSequence = GeneratorCollection.Slice_
+    public typealias SubSequence = GeneratorCollection.SubSequence
     
     public subscript(i: Index) -> T {
         return i.segment.withUnsafeMutablePointerToElements {
