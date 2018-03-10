@@ -180,8 +180,7 @@ extension GeneratorBuffer where T == Void {
 }
 
 // If this code were in the standard library, we would have a
-// statically-allocated piece of storage for the canonical empty buffer.  Here
-// we must use
+// statically-allocated piece of storage for the canonical empty buffer.
 private let _emptyBuffer = GeneratorBuffer<Void>.makeEmpty()
 
 /// A `Collection` of elements produced by a generator.
@@ -197,7 +196,7 @@ public struct GeneratorCollection<T> {
     public let startIndex: Index
 
     // FIXME: 15 is almost certainly the wrong default below, but it allows us
-    // to observe the code working wiht smaller numbers of elements.
+    // to observe the code working with smaller numbers of elements.
     
     /// Creates an instance with initial storage for at least `blockSize`
     /// elements, consuming as many as fit in the storage from `source`.
