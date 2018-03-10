@@ -189,7 +189,10 @@ private let _emptyBuffer = GeneratorBuffer<Void>.makeEmpty()
 /// `GeneratorCollection` is "semi-lazy" in that it eagerly pulls up to a given
 /// *blocksize* of elements from the generator, and thereafter only pulls more
 /// blocks of elements on demand.
-public struct GeneratorCollection<T> : Collection {
+public struct GeneratorCollection<T> {
+    private let source: ()->T?
+    public let startIndex: Index
+    
     public struct Index {
         /// The ordinal number of `segment` in the generated list.
         fileprivate var segmentNumber: UInt = UInt.max
@@ -201,37 +204,35 @@ public struct GeneratorCollection<T> : Collection {
 
     public struct SubSequence {
         public private(set) var startIndex, endIndex: Index
-        public private(set) var generator: ()->T?
+        public private(set) var source: ()->T?
     }
     
-    static func emptyGenerator() -> T? { return nil }
-    
-    public init(blockSize: Int = 15, generator: @escaping ()->T?) {
-        guard let first = generator() else {
-            self.generator = GeneratorCollection.emptyGenerator
+    public init(blockSize: Int = 15, source: @escaping ()->T?) {
+        guard let first = source() else {
+            self.source = { return nil }
             self.startIndex = Index()
             return
         }
         
-        self.generator = generator
+        self.source = source
         startIndex = Index(
             segmentNumber: 0,
             offsetInSegment: 0,
             segment: GeneratorBuffer<T>.create(
                 minimumCapacity: blockSize,
                 first: first,
-                rest: generator)
+                rest: source)
         )
     }
-    
-    public let startIndex: Index
-    
+}
+
+extension GeneratorCollection : Collection {
     public var endIndex: Index {
         return Index()
     }
     
     public func formIndex(after i: inout Index) {
-        i.stepForward(generator: generator)
+        i.stepForward(source: source)
     }
     
     public func index(after i: Index) -> Index {
@@ -250,7 +251,7 @@ public struct GeneratorCollection<T> : Collection {
         return SubSequence(
             startIndex: bounds.lowerBound,
             endIndex: bounds.upperBound,
-            generator: generator
+            source: source
         )
     }
 
@@ -258,8 +259,6 @@ public struct GeneratorCollection<T> : Collection {
         return startIndex.segment.header.count
            - startIndex.offsetInSegment
     }
-    
-    let generator: ()->T?
 }
 
 extension GeneratorCollection.SubSequence : Collection {
@@ -277,12 +276,12 @@ extension GeneratorCollection.SubSequence : Collection {
         return SubSequence(
             startIndex: bounds.lowerBound,
             endIndex: bounds.upperBound,
-            generator: generator
+            source: source
         )
     }
 
     public func formIndex(after i: inout Index) {
-        i.stepForward(generator: generator)
+        i.stepForward(source: source)
     }
     
     public func index(after i: Index) -> Index {
@@ -299,7 +298,7 @@ extension GeneratorCollection.SubSequence : Collection {
     public mutating func popFirst() -> Element? {
         guard !isEmpty else { return nil }
         let r = self[startIndex]
-        startIndex.stepForward(generator: generator)
+        startIndex.stepForward(source: source)
         // FIXME https://bugs.swift.org/browse/SR-7167: the following
         // holds an extra reference.
         //
@@ -309,12 +308,12 @@ extension GeneratorCollection.SubSequence : Collection {
 }
 
 extension GeneratorCollection.Index : Comparable {
-    fileprivate mutating func stepForward(generator: ()->T?) {
+    fileprivate mutating func stepForward(source: ()->T?) {
         offsetInSegment += 1
         if offsetInSegment < segment.header.count { return }
 
         if let nextSegment = isKnownUniquelyReferenced(&segment)
-            ? segment.header._next : segment.next(from: generator)
+            ? segment.header._next : segment.next(from: source)
         {
             if nextSegment.header.count == 0 {
                 self = GeneratorCollection.Index()
@@ -328,8 +327,8 @@ extension GeneratorCollection.Index : Comparable {
         }
         assert(isKnownUniquelyReferenced(&segment))
         
-        if let first = generator() {
-            segment.fill(first: first, rest: generator)
+        if let first = source() {
+            segment.fill(first: first, rest: source)
             offsetInSegment = 0
             segmentNumber += 1
         }
@@ -362,11 +361,11 @@ func makeGenerator() -> ()->Int? {
     return { i.next() }
 }
 
-print(Array(GeneratorCollection(generator: makeGenerator())))
+print(Array(GeneratorCollection(source: makeGenerator())))
 
 func testUnique() {
     var a: [Int] = []
-    var source = GeneratorCollection(generator: makeGenerator())[...]
+    var source = GeneratorCollection(source: makeGenerator())[...]
     while let x = source.popFirst() {
         a.append(x)
     }
