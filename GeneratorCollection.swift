@@ -227,6 +227,17 @@ extension GeneratorCollection.Slice_ : Collection {
         return startIndex.buffer.header.count
            - startIndex.offsetInBuffer
     }
+
+    public mutating func popFirst() -> Element? {
+        guard !isEmpty else { return nil }
+        let r = self[startIndex]
+        startIndex.stepForward(generator: generator)
+        // FIXME https://bugs.swift.org/browse/SR-7167: the following
+        // holds an extra reference.
+        //
+        // self.formIndex(after: &startIndex)
+        return r
+    }
 }
 
 extension GeneratorCollection.Index : Comparable {
@@ -234,10 +245,6 @@ extension GeneratorCollection.Index : Comparable {
         offsetInBuffer += 1
         if offsetInBuffer < buffer.header.count { return }
 
-        if isKnownUniquelyReferenced(&buffer) {
-            print("Why doesn't this check ever fire?")
-        }
-        
         if let nextBuffer = isKnownUniquelyReferenced(&buffer)
             ? buffer.header._next : buffer.next(from: generator)
         {
