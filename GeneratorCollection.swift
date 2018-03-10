@@ -255,12 +255,12 @@ extension GeneratorCollection : Collection {
     }
     
     public func formIndex(after i: inout Index) {
-        i.stepForward(source: source)
+        i.stepForward(pullingFrom: source)
     }
     
     public func index(after i: Index) -> Index {
         var j = i
-        j.stepForward(source: source)
+        j.stepForward(pullingFrom: source)
         return j
     }
     
@@ -303,12 +303,12 @@ extension GeneratorCollection.SubSequence : Collection {
     }
 
     public func formIndex(after i: inout Index) {
-        i.stepForward(source: source)
+        i.stepForward(pullingFrom: source)
     }
     
     public func index(after i: Index) -> Index {
         var j = i
-        j.stepForward(source: source)
+        j.stepForward(pullingFrom: source)
         return j
     }
     
@@ -316,7 +316,9 @@ extension GeneratorCollection.SubSequence : Collection {
         return startIndex.segment.header.count - startIndex.offsetInSegment
     }
     
-    // The following is needed because of https://bugs.swift.org/browse/SR-7167
+    // The following is needed because of https://bugs.swift.org/browse/SR-7167.
+    // Otherwise our "popFirst" rendition of the for...in loop fails to re-use
+    // the same buffer.
     
     /// Removes and returns the first element of the collection.
     ///
@@ -327,43 +329,13 @@ extension GeneratorCollection.SubSequence : Collection {
     public mutating func popFirst() -> Element? {
         guard !isEmpty else { return nil }
         let r = self[startIndex]
-        startIndex.stepForward(source: source)
+        startIndex.stepForward(pullingFrom: source)
         return r
     }
 }
 
-extension GeneratorCollection.Index : Comparable {
-    fileprivate mutating func stepForward(source: ()->T?) {
-        offsetInSegment += 1
-        if offsetInSegment < segment.header.count { return }
 
-        if let nextSegment = isKnownUniquelyReferenced(&segment)
-            ? segment.header._next : segment.next(from: source)
-        {
-            if nextSegment.header.count == 0 {
-                self = GeneratorCollection.Index()
-            }
-            else {
-                segment = nextSegment
-                offsetInSegment = 0
-                segmentNumber += 1
-            }
-            return
-        }
-        assert(isKnownUniquelyReferenced(&segment))
-        
-        if let first = source() {
-            segment.fill(first: first, rest: source)
-            offsetInSegment = 0
-            segmentNumber += 1
-        }
-        else {
-            let next = GeneratorCollection.Index()
-            segment.header._next = next.segment
-            self = next
-        }
-    }
-    
+extension GeneratorCollection.Index : Comparable {
     public static func == (
         l: GeneratorCollection.Index, r: GeneratorCollection.Index
     ) -> Bool {
@@ -379,25 +351,79 @@ extension GeneratorCollection.Index : Comparable {
     }
 }
 
+extension GeneratorCollection.Index {
+    /// Move forward one position in the collection, if necessary pulling
+    /// elements to fill a new buffer from `source`.
+    fileprivate mutating func stepForward(pullingFrom source: ()->T?) {
+        offsetInSegment += 1
+        if offsetInSegment < segment.header.count { return }
+
+        // if the segment is uniquely-referenced, no other thread has it and we
+        // can safely read the _next field directly.  
+        if let nextSegment = isKnownUniquelyReferenced(&segment)
+            ? segment.header._next : segment.next(from: source)
+        {
+            if nextSegment.header.count == 0 {
+                self = GeneratorCollection.Index()
+            }
+            else {
+                segment = nextSegment
+                offsetInSegment = 0
+                segmentNumber += 1
+            }
+            return
+        }
+        
+        // segment.next() always returns non-nil, so we have a unique reference.
+        assert(isKnownUniquelyReferenced(&segment))
+
+        if let first = source() {
+            // refill and re-use the same buffer.
+            print("refilling...")
+            segment.fill(first: first, rest: source)
+            offsetInSegment = 0
+            segmentNumber += 1
+        }
+        else {
+            // we're at a definitive end; link the empty buffer into the chain.
+            let nextSelf = GeneratorCollection.Index()
+            segment.header._next = nextSelf.segment
+            self = nextSelf
+        }
+    }
+}
+
 //===--- Tests ------------------------------------------------------------===//
 
+/// Returns a simple generator of Ints from 0...100
 func makeGenerator() -> ()->Int? {
     var i = (0...100).makeIterator()
     return { i.next() }
 }
 
-print(Array(GeneratorCollection(source: makeGenerator())))
+// Build a GeneratorCollection
+let g = GeneratorCollection(source: makeGenerator())
 
-func testUnique() {
+print(Array(g)) // It has the right contents
+
+// Basic indexing operations work.
+print(g[g.index(of: 13)!], g[g.index(of: 14)!], g[g.index(of: 15)!])
+print(g[g.index(of: 28)!], g[g.index(of: 29)!], g[g.index(of: 30)!])
+print(g.index(of: 200) == nil)
+
+func testForLoopTranslation() {
     var a: [Int] = []
+    // Proposed implementation of
+    //
+    //    for x in GeneratorCollection(source: makeGenerator()) { a.append(x) }
     var source = GeneratorCollection(source: makeGenerator())[...]
-    while let x = source.popFirst() {
-        a.append(x)
-    }
+    while let x = source.popFirst() { a.append(x) }
+
+    // See that we got there
     print(a)
 }
 
-testUnique()
+testForLoopTranslation()
 
 // Local Variables:
 // swift-basic-offset: 4
