@@ -1,6 +1,51 @@
 // swift -parse-stdlib -Xfrontend -disable-access-control SequenceToCollection.swift
 import Swift
 
+/// Exactly once, regulated by `access` pointing to a zero-initialized
+/// `Int` not on the stack, invoke `writer(&target)`.
+func once<T>(
+    regulatedBy access: UnsafeMutablePointer<Int>,
+    modify target: inout T,
+    applying writer: (inout T)->Void
+) {
+    // We can't capture any generic type information in the 'C'
+    // function passed to Builtin.onceWithContext, so we'll need go
+    // through a thunk.
+    
+    /// A type-erased package for the expression `writer(&target)`
+    typealias Thunk = (
+        initialize: (UnsafeMutableRawPointer)->Void,
+        target: UnsafeMutableRawPointer
+    )
+    
+    // Although we'll store writer in the thunk, the thunk is never
+    // copied, so there's no actual escaping.
+    withoutActuallyEscaping(writer) { writer in
+        withUnsafeMutablePointer(to: &target) { targetPtr in
+            // Prepare the thunk
+            var thunk = Thunk(
+                initialize: { p in
+                    let targetPtr = p.assumingMemoryBound(to: T.self)
+                    writer(&targetPtr.pointee)
+                },
+                target: UnsafeMutableRawPointer(targetPtr)
+            )
+
+            withUnsafePointer(to: &thunk) { thunkPtr in
+                // Use it as the context for the builtin.
+                Builtin.onceWithContext(
+                    access._rawValue,
+                    { 
+                        let thunk = UnsafePointer<Thunk>($0).pointee
+                        thunk.initialize(thunk.target)
+                    },
+                    thunkPtr._rawValue
+                )
+            }
+        }
+    }
+}
+
 public final class GeneratorBuffer<T>
   : ManagedBuffer<GeneratorBuffer.Header, T> {
     public static func create(
@@ -42,36 +87,23 @@ public final class GeneratorBuffer<T>
     /// Returns the next GeneratorBuffer in the sequence, retrieving
     /// elements if necessary by calling `generator`.
     func next(from generator: ()->T?) -> GeneratorBuffer {
-        typealias OnceContext = (
-            myHeader: UnsafeMutableRawPointer,
-            initNext: (UnsafeMutableRawPointer)->Void
-        )
-        
         return withUnsafeMutablePointerToHeader { hPtr in
-            withoutActuallyEscaping(generator) { generator in
-
-                var onceContext: OnceContext = (
-                    myHeader: UnsafeMutableRawPointer(hPtr),
-                    initNext: { rawHeader in
-                        rawHeader.assumingMemoryBound(to: Header.self)
-                            .pointee.setNext(from: generator)
-                    }
-                )
-
-                withUnsafeMutablePointer(to: &hPtr.pointee.access) { aPtr in
-                    withUnsafeMutablePointer(to: &onceContext) { cPtr in
-                        Builtin.onceWithContext(
-                            aPtr._rawValue,
-                            { rawContextPtr in
-                                let context = UnsafePointer<OnceContext>(rawContextPtr).pointee
-                                context.initNext(context.myHeader)
-                            },
-                            cPtr._rawValue
-                        )
-                    }
+            once(
+                regulatedBy: &hPtr[0].access,
+                modify: &hPtr[0]._next
+            ) { next in
+                if let first = generator() {
+                    next = GeneratorBuffer.create(
+                        minimumCapacity: hPtr[0].count,
+                        first: first, rest: generator
+                    )
+                }
+                else {
+                    next = unsafeBitCast(
+                        emptyBuffer, to: GeneratorBuffer<T>.self)
                 }
             }
-            return hPtr.pointee._next.unsafelyUnwrapped
+            return hPtr[0]._next.unsafelyUnwrapped
         }
     }
 
@@ -79,19 +111,6 @@ public final class GeneratorBuffer<T>
         var _next: GeneratorBuffer?
         var access: Int
         var count: Int
-
-        fileprivate mutating func setNext(from generator: ()->T?) {
-            if let first = generator() {
-                _next = GeneratorBuffer.create(
-                    minimumCapacity: count,
-                    first: first, rest: generator
-                )
-            }
-            else {
-                _next = unsafeBitCast(
-                    emptyBuffer, to: GeneratorBuffer<T>.self)
-            }
-        }
     }
 }
 
@@ -112,6 +131,12 @@ public struct GeneratorCollection<T> : Collection {
         var buffer: GeneratorBuffer<T>
             = unsafeBitCast(emptyBuffer, to: GeneratorBuffer<T>.self)
     }
+
+    public struct Slice_ {
+        public private(set) var startIndex, endIndex: Index
+        public private(set) var generator: ()->T?
+    }
+    public typealias SubSequence = Slice_
     
     static func emptyGenerator() -> T? { return nil }
     
@@ -138,33 +163,7 @@ public struct GeneratorCollection<T> : Collection {
     }
     
     public func formIndex(after i: inout Index) {
-        i.offsetInBuffer += 1
-        if i.offsetInBuffer < i.buffer.header.count { return }
-
-        if let nextBuffer = isKnownUniquelyReferenced(&i.buffer)
-            ? i.buffer.header._next : i.buffer.next(from: generator)
-        {
-            if nextBuffer.header.count == 0 {
-                i = endIndex
-            }
-            else {
-                i.buffer = nextBuffer
-                i.offsetInBuffer = 0
-                i.bufferNumber += 1
-            }
-            return
-        }
-        assert(isKnownUniquelyReferenced(&i.buffer))
-        
-        if let first = generator() {
-            i.buffer.fill(first: first, rest: generator)
-            i.offsetInBuffer = 0
-            i.bufferNumber += 1
-        }
-        else {
-            i.buffer.header._next = endIndex.buffer
-            i = endIndex
-        }
+        i.stepForward(generator: generator)
     }
     
     public func index(after i: Index) -> Index {
@@ -178,11 +177,94 @@ public struct GeneratorCollection<T> : Collection {
             $0[i.offsetInBuffer]
         }
     }
+
+    public subscript(bounds: Range<Index>) -> Slice_ {
+        return Slice_(
+            startIndex: bounds.lowerBound,
+            endIndex: bounds.upperBound,
+            generator: generator
+        )
+    }
+
+    public var underestimatedCount: Int {
+        return startIndex.buffer.header.count
+           - startIndex.offsetInBuffer
+    }
     
     let generator: ()->T?
 }
 
+extension GeneratorCollection.Slice_ : Collection {
+    public typealias Index = GeneratorCollection.Index
+    public typealias Element = T
+    public typealias SubSequence = GeneratorCollection.Slice_
+    
+    public subscript(i: Index) -> T {
+        return i.buffer.withUnsafeMutablePointerToElements {
+            $0[i.offsetInBuffer]
+        }
+    }
+
+    public subscript(bounds: Range<Index>) -> SubSequence {
+        return SubSequence(
+            startIndex: bounds.lowerBound,
+            endIndex: bounds.upperBound,
+            generator: generator
+        )
+    }
+
+    public func formIndex(after i: inout Index) {
+        i.stepForward(generator: generator)
+    }
+    
+    public func index(after i: Index) -> Index {
+        var j = i
+        formIndex(after: &j)
+        return j
+    }
+    
+    public var underestimatedCount: Int {
+        return startIndex.buffer.header.count
+           - startIndex.offsetInBuffer
+    }
+}
+
 extension GeneratorCollection.Index : Comparable {
+    fileprivate mutating func stepForward(generator: ()->T?) {
+        offsetInBuffer += 1
+        if offsetInBuffer < buffer.header.count { return }
+
+        if isKnownUniquelyReferenced(&buffer) {
+            print("Why doesn't this check ever fire?")
+        }
+        
+        if let nextBuffer = isKnownUniquelyReferenced(&buffer)
+            ? buffer.header._next : buffer.next(from: generator)
+        {
+            if nextBuffer.header.count == 0 {
+                self = GeneratorCollection.Index()
+            }
+            else {
+                buffer = nextBuffer
+                offsetInBuffer = 0
+                bufferNumber += 1
+            }
+            return
+        }
+        assert(isKnownUniquelyReferenced(&buffer))
+        
+        if let first = generator() {
+            buffer.fill(first: first, rest: generator)
+            offsetInBuffer = 0
+            bufferNumber += 1
+        }
+        else {
+            let next = GeneratorCollection.Index()
+            buffer.header._next = next.buffer
+            self = next
+        }
+    }
+    
     public static func == (
         l: GeneratorCollection.Index, r: GeneratorCollection.Index
     ) -> Bool {
