@@ -73,7 +73,7 @@ func once<T>(
 
 /// A buffer of `T`s produced by a generator.
 ///
-/// This buffer participates in a linked list of buffers extracted in order from
+/// This buffer participates in a linked list of segments extracted in order from
 /// the generator.  We use a strategy similar to COW: when multiply-referenced,
 /// the buffer is entirely immutable except for its `next` field in the linked
 /// list, which is (thread-safely) filled on demand.
@@ -191,12 +191,12 @@ private let _emptyBuffer = GeneratorBuffer<Void>.makeEmpty()
 /// blocks of elements on demand.
 public struct GeneratorCollection<T> : Collection {
     public struct Index {
-        /// The ordinal number of `buffer` in the generated list.
-        fileprivate var bufferNumber: UInt = UInt.max
+        /// The ordinal number of `segment` in the generated list.
+        fileprivate var segmentNumber: UInt = UInt.max
         /// The index of the referenced element.
-        fileprivate var offsetInBuffer: Int = 0
+        fileprivate var offsetInSegment: Int = 0
         /// The buffer containing the referenced element
-        fileprivate var buffer = GeneratorBuffer<T>.emptyBuffer
+        fileprivate var segment = GeneratorBuffer<T>.emptyBuffer
     }
 
     public struct Slice_ {
@@ -216,9 +216,9 @@ public struct GeneratorCollection<T> : Collection {
         
         self.generator = generator
         startIndex = Index(
-            bufferNumber: 0,
-            offsetInBuffer: 0,
-            buffer: GeneratorBuffer<T>.create(
+            segmentNumber: 0,
+            offsetInSegment: 0,
+            segment: GeneratorBuffer<T>.create(
                 minimumCapacity: blockSize,
                 first: first,
                 rest: generator)
@@ -242,8 +242,8 @@ public struct GeneratorCollection<T> : Collection {
     }
     
     public subscript(i: Index) -> T {
-        return i.buffer.withUnsafeMutablePointerToElements {
-            $0[i.offsetInBuffer]
+        return i.segment.withUnsafeMutablePointerToElements {
+            $0[i.offsetInSegment]
         }
     }
 
@@ -256,8 +256,8 @@ public struct GeneratorCollection<T> : Collection {
     }
 
     public var underestimatedCount: Int {
-        return startIndex.buffer.header.count
-           - startIndex.offsetInBuffer
+        return startIndex.segment.header.count
+           - startIndex.offsetInSegment
     }
     
     let generator: ()->T?
@@ -269,8 +269,8 @@ extension GeneratorCollection.Slice_ : Collection {
     public typealias SubSequence = GeneratorCollection.Slice_
     
     public subscript(i: Index) -> T {
-        return i.buffer.withUnsafeMutablePointerToElements {
-            $0[i.offsetInBuffer]
+        return i.segment.withUnsafeMutablePointerToElements {
+            $0[i.offsetInSegment]
         }
     }
 
@@ -293,8 +293,8 @@ extension GeneratorCollection.Slice_ : Collection {
     }
     
     public var underestimatedCount: Int {
-        return startIndex.buffer.header.count
-           - startIndex.offsetInBuffer
+        return startIndex.segment.header.count
+           - startIndex.offsetInSegment
     }
 
     public mutating func popFirst() -> Element? {
@@ -311,32 +311,32 @@ extension GeneratorCollection.Slice_ : Collection {
 
 extension GeneratorCollection.Index : Comparable {
     fileprivate mutating func stepForward(generator: ()->T?) {
-        offsetInBuffer += 1
-        if offsetInBuffer < buffer.header.count { return }
+        offsetInSegment += 1
+        if offsetInSegment < segment.header.count { return }
 
-        if let nextBuffer = isKnownUniquelyReferenced(&buffer)
-            ? buffer.header._next : buffer.next(from: generator)
+        if let nextSegment = isKnownUniquelyReferenced(&segment)
+            ? segment.header._next : segment.next(from: generator)
         {
-            if nextBuffer.header.count == 0 {
+            if nextSegment.header.count == 0 {
                 self = GeneratorCollection.Index()
             }
             else {
-                buffer = nextBuffer
-                offsetInBuffer = 0
-                bufferNumber += 1
+                segment = nextSegment
+                offsetInSegment = 0
+                segmentNumber += 1
             }
             return
         }
-        assert(isKnownUniquelyReferenced(&buffer))
+        assert(isKnownUniquelyReferenced(&segment))
         
         if let first = generator() {
-            buffer.fill(first: first, rest: generator)
-            offsetInBuffer = 0
-            bufferNumber += 1
+            segment.fill(first: first, rest: generator)
+            offsetInSegment = 0
+            segmentNumber += 1
         }
         else {
             let next = GeneratorCollection.Index()
-            buffer.header._next = next.buffer
+            segment.header._next = next.segment
             self = next
         }
     }
@@ -344,15 +344,15 @@ extension GeneratorCollection.Index : Comparable {
     public static func == (
         l: GeneratorCollection.Index, r: GeneratorCollection.Index
     ) -> Bool {
-        return (l.bufferNumber, l.offsetInBuffer) ==
-            (r.bufferNumber, r.offsetInBuffer)
+        return (l.segmentNumber, l.offsetInSegment) ==
+            (r.segmentNumber, r.offsetInSegment)
     }
     
     public static func < (
         l: GeneratorCollection.Index, r: GeneratorCollection.Index
     ) -> Bool {
-        return (l.bufferNumber, l.offsetInBuffer) <
-            (r.bufferNumber, r.offsetInBuffer)
+        return (l.segmentNumber, l.offsetInSegment) <
+            (r.segmentNumber, r.offsetInSegment)
     }
 }
 
