@@ -1,15 +1,5 @@
 // swift -parse-stdlib -Xfrontend -disable-access-control SequenceToCollection.swift
 import Swift
-extension ManagedBuffer {
-    @_inlineable
-    public final class func unsafeCreateUninitialized(
-        minimumCapacity: Int
-        ) -> ManagedBuffer<Header, Element> {
-        return Builtin.allocWithTailElems_1(
-            self,
-            minimumCapacity._builtinWordValue, Element.self)
-    }
-}
 
 public final class GeneratorBuffer<T>
   : ManagedBuffer<GeneratorBuffer.Header, T> {
@@ -48,53 +38,60 @@ public final class GeneratorBuffer<T>
         }
         self.header.count = n
     }
-    
+
+    /// Returns the next GeneratorBuffer in the sequence, retrieving
+    /// elements if necessary by calling `generator`.
     func next(from generator: ()->T?) -> GeneratorBuffer {
-        typealias Context = (
-            thisBuffer: UnsafeMutableRawPointer,
+        typealias OnceContext = (
+            myHeader: UnsafeMutableRawPointer,
             initNext: (UnsafeMutableRawPointer)->Void
         )
         
-        withoutActuallyEscaping(generator) { generator in
-            var context: Context = (
-                thisBuffer: Unmanaged.passUnretained(self).toOpaque(),
-                initNext: { rawSelf in
-                    let me = Unmanaged<GeneratorBuffer>.fromOpaque(rawSelf)
-                        .takeUnretainedValue()
-                    
-                    if let first = generator() {
-                        me.header._next = GeneratorBuffer.create(
-                            minimumCapacity: me.header.count,
-                            first: first, rest: generator
+        return withUnsafeMutablePointerToHeader { hPtr in
+            withoutActuallyEscaping(generator) { generator in
+
+                var onceContext: OnceContext = (
+                    myHeader: UnsafeMutableRawPointer(hPtr),
+                    initNext: { rawHeader in
+                        rawHeader.assumingMemoryBound(to: Header.self)
+                            .pointee.setNext(from: generator)
+                    }
+                )
+
+                withUnsafeMutablePointer(to: &hPtr.pointee.access) { aPtr in
+                    withUnsafeMutablePointer(to: &onceContext) { cPtr in
+                        Builtin.onceWithContext(
+                            aPtr._rawValue,
+                            { rawContextPtr in
+                                let context = UnsafePointer<OnceContext>(rawContextPtr).pointee
+                                context.initNext(context.myHeader)
+                            },
+                            cPtr._rawValue
                         )
                     }
-                    else {
-                        me.header._next = unsafeBitCast(
-                            emptyBuffer, to: GeneratorBuffer<T>.self)
-                    }
-                }
-            )
-
-            withUnsafeMutablePointer(to: &header.access) { aPtr in
-                withUnsafeMutablePointer(to: &context) { cPtr in
-                    Builtin.onceWithContext(
-                        aPtr._rawValue,
-                        { rawContextPtr in
-                            let context = UnsafePointer<Context>(rawContextPtr).pointee
-                            context.initNext(context.thisBuffer)
-                        },
-                        cPtr._rawValue
-                    )
                 }
             }
+            return hPtr.pointee._next.unsafelyUnwrapped
         }
-        return header._next!
     }
 
     struct Header {
         var _next: GeneratorBuffer?
         var access: Int
         var count: Int
+
+        fileprivate mutating func setNext(from generator: ()->T?) {
+            if let first = generator() {
+                _next = GeneratorBuffer.create(
+                    minimumCapacity: count,
+                    first: first, rest: generator
+                )
+            }
+            else {
+                _next = unsafeBitCast(
+                    emptyBuffer, to: GeneratorBuffer<T>.self)
+            }
+        }
     }
 }
 
@@ -144,7 +141,7 @@ public struct GeneratorCollection<T> : Collection {
         i.offsetInBuffer += 1
         if i.offsetInBuffer < i.buffer.header.count { return }
 
-        if let nextBuffer = false // isKnownUniquelyReferenced(&i.buffer)
+        if let nextBuffer = isKnownUniquelyReferenced(&i.buffer)
             ? i.buffer.header._next : i.buffer.next(from: generator)
         {
             if nextBuffer.header.count == 0 {
@@ -218,3 +215,8 @@ func testUnique() {
 }
 
 testUnique()
+
+// Local Variables:
+// swift-basic-offset: 4
+// fill-column: 80
+// End:
