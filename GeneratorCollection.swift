@@ -187,27 +187,28 @@ private let _emptyBuffer = GeneratorBuffer<Void>.makeEmpty()
 /// A `Collection` of elements produced by a generator.
 ///
 /// `GeneratorCollection` is "semi-lazy" in that it eagerly pulls up to a given
-/// *blocksize* of elements from the generator, and thereafter only pulls more
-/// blocks of elements on demand.
+/// *block size* of elements from the generator, and thereafter only pulls
+/// additional blocks of elements on demand.
 public struct GeneratorCollection<T> {
-    private let source: ()->T?
-    public let startIndex: Index
-    
-    public struct Index {
-        /// The ordinal number of `segment` in the generated list.
-        fileprivate var segmentNumber: UInt = UInt.max
-        /// The index of the referenced element.
-        fileprivate var offsetInSegment: Int = 0
-        /// The buffer containing the referenced element
-        fileprivate var segment = GeneratorBuffer<T>.emptyBuffer
-    }
+    /// Where the elements come from.
+    private let source: ()->Element?
 
-    public struct SubSequence {
-        public private(set) var startIndex, endIndex: Index
-        public private(set) var source: ()->T?
-    }
+    /// The position of the first element, or `endIndex` if `self` is empty.
+    public let startIndex: Index
+
+    // FIXME: 15 is almost certainly the wrong default below, but it allows us
+    // to observe the code working wiht smaller numbers of elements.
     
+    /// Creates an instance with initial storage for at least `blockSize`
+    /// elements, consuming as many as fit in the storage from `source`.
+    ///
+    /// - Note: The instance and its slices have the exclusive right to invoke
+    ///   `source` from this point forward.  The argument passed should be
+    ///   considered uncallable once instance construction has been initiated.
     public init(blockSize: Int = 15, source: @escaping ()->T?) {
+
+        // The empty source is a special case for which we can avoid allocating
+        // a buffer.
         guard let first = source() else {
             self.source = { return nil }
             self.startIndex = Index()
@@ -219,14 +220,36 @@ public struct GeneratorCollection<T> {
             segmentNumber: 0,
             offsetInSegment: 0,
             segment: GeneratorBuffer<T>.create(
-                minimumCapacity: blockSize,
-                first: first,
-                rest: source)
+                minimumCapacity: blockSize, first: first, rest: source)
         )
     }
 }
 
 extension GeneratorCollection : Collection {
+    /// A position in this collection.
+    ///
+    /// Valid indices consist of the position of every element and a
+    /// "past the end" position that's not valid for use as a subscript
+    /// argument.
+    public struct Index {
+        /// The ordinal number of `segment` in the generated list.
+        fileprivate var segmentNumber: UInt = UInt.max
+        /// The index of the referenced element.
+        fileprivate var offsetInSegment: Int = 0
+        /// The buffer containing the referenced element
+        fileprivate var segment = GeneratorBuffer<T>.emptyBuffer
+    }
+
+    /// A contiguous subrange of the `GeneratorCollection`'s
+    /// elements.
+    ///
+    /// - Note: repeatedly dropping or popping elements from the front allows
+    ///   storage for unreachable elements to be reclaimed.
+    public struct SubSequence {
+        public private(set) var startIndex, endIndex: Index
+        fileprivate private(set) var source: ()->T?
+    }
+    
     public var endIndex: Index {
         return Index()
     }
@@ -237,7 +260,7 @@ extension GeneratorCollection : Collection {
     
     public func index(after i: Index) -> Index {
         var j = i
-        formIndex(after: &j)
+        j.stepForward(source: source)
         return j
     }
     
@@ -256,8 +279,7 @@ extension GeneratorCollection : Collection {
     }
 
     public var underestimatedCount: Int {
-        return startIndex.segment.header.count
-           - startIndex.offsetInSegment
+        return startIndex.segment.header.count - startIndex.offsetInSegment
     }
 }
 
@@ -286,23 +308,26 @@ extension GeneratorCollection.SubSequence : Collection {
     
     public func index(after i: Index) -> Index {
         var j = i
-        formIndex(after: &j)
+        j.stepForward(source: source)
         return j
     }
     
     public var underestimatedCount: Int {
-        return startIndex.segment.header.count
-           - startIndex.offsetInSegment
+        return startIndex.segment.header.count - startIndex.offsetInSegment
     }
-
+    
+    // The following is needed because of https://bugs.swift.org/browse/SR-7167
+    
+    /// Removes and returns the first element of the collection.
+    ///
+    /// - Returns: The first element of the collection if the collection is
+    ///   not empty; otherwise, `nil`.
+    ///
+    /// - Complexity: O(1)
     public mutating func popFirst() -> Element? {
         guard !isEmpty else { return nil }
         let r = self[startIndex]
         startIndex.stepForward(source: source)
-        // FIXME https://bugs.swift.org/browse/SR-7167: the following
-        // holds an extra reference.
-        //
-        // self.formIndex(after: &startIndex)
         return r
     }
 }
