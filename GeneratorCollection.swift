@@ -140,7 +140,7 @@ public struct GeneratorCollection<T> : Collection {
     
     static func emptyGenerator() -> T? { return nil }
     
-    public init(generator: @escaping ()->T?) {
+    public init(blockSize: Int = 15, generator: @escaping ()->T?) {
         guard let first = generator() else {
             self.generator = GeneratorCollection.emptyGenerator
             self.startIndex = Index()
@@ -152,7 +152,9 @@ public struct GeneratorCollection<T> : Collection {
             bufferNumber: 0,
             offsetInBuffer: 0,
             buffer: GeneratorBuffer<T>.create(
-                minimumCapacity: 15, first: first, rest: generator)
+                minimumCapacity: blockSize,
+                first: first,
+                rest: generator)
         )
     }
     
