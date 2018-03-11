@@ -5,13 +5,12 @@ should remove them from the language.
 
 ## Why do we have `Sequence` and `IteratorProtocol`?
 
-Historically, these protocols were created to support the `for`...`in`
-loop over an arbitrary sequence (small ‘s’) of elements.  The compiler
-was made to recognize an instance any type conforming to `Sequence` as
-eligible for use in a loop.  It was an extremely simple model that
-directly addressed the needs of that one language construct, and could
-support trivial generic algorithms such as `reduce`, `map`, and
-`filter`.
+These protocols were originally created to support looping over
+arbitrary sequences (small ‘s’) with `for element in seq {...}`.  Any
+type conforming to `Sequence` became eligible for use in a loop.  It
+was an extremely simple model that directly addressed the needs of the
+`for` loop and could support trivial generic algorithms such as
+`reduce`, `map`, and `filter` besides.
 
 The `Sequence` model was, however, *too* simple to support nontrivial
 algorithms such as reverse, sort, and binary search.  The nontrivial
