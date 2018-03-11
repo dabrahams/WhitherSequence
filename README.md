@@ -5,12 +5,24 @@ should remove them from the language.
 
 ## Why do we have `Sequence` and `IteratorProtocol`?
 
-These protocols were originally created to support looping over
-arbitrary sequences (small ‘s’) with `for element in seq {...}`.  Any
-type conforming to `Sequence` became eligible for use in a loop.  It
-was an extremely simple model that directly addressed the needs of the
-`for` loop and could support trivial generic algorithms such as
-`reduce`, `map`, and `filter` besides.
+These protocols were originally created to support `for` looping over
+arbitrary sequences.  The code 
+
+```swift
+for x in seq { something(x) }
+```
+
+would be compiled as:
+
+```swift
+__i = seq.makeIterator()
+while let x = __i.next() { something(x) }
+```
+
+where `seq` could have any type conforming to `Sequence`.  It was an
+extremely simple model that directly addressed the needs of the `for`
+loop and could support trivial generic algorithms such as `reduce`,
+`map`, and `filter` besides.
 
 The `Sequence` model was, however, *too* simple to support nontrivial
 algorithms such as reverse, sort, and binary search.  The nontrivial
