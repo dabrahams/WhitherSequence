@@ -1,7 +1,7 @@
 # Let's Retire `Sequence` and `IteratorProtocol`
 
-tldr: `Sequence` and `IteratorProtocol` are not pulling their weight, so we
-should remove them from the language.
+tldr: `Sequence` and `IteratorProtocol` are not pulling their weight,
+so we should remove them from the language.
 
 ## Why do we have `Sequence` and `IteratorProtocol`?
 
@@ -52,41 +52,96 @@ decided that single-pass sequences deserved their own protocol…
 *without ever discovering a model that couldn't efficiently support
 multi-pass operation*.
 
-## Problems caused by `Sequence`
+## Some Sequences are Fundamentally Single-Pass
 
-- Shadowing
-- Semantic difficulty with mutation
-- `SubSequence` but no slicing
-- API surface
+While it's easy to build a sequence that is single-pass, sequences
+that are *fundamentally* single-pass are extremely rare.  For example,
+the following is only single-pass because of a design choice:
 
-## We Don't Need Protocols for Single-Pass Behavior
+```swift
+// Would be multipass if declared as a struct
+class Seq : Sequence, IteratorProtocol {
+    var i = 0
+    func makeIterator() -> Seq { return self }
+    func next() -> Int? { return i >= 10 ? nil : (i, i+=1).0 }
+}
+let s = Seq()
+print(Array(s)) // [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+print(Array(s)) // [] oops, s was mutated
+```
 
-- Actual single-pass behavior is rare
+A sequence that is *fundamentally* single-pass would require
+significant storage or computation to support multiple passes over its
+elements.  There are two known cases:
 
-- Interoperability of any actual single-pass sequence with
-  `Collection` algorithms can be efficient using a
-  `GeneratorCollection` adapter.
-  
+1. The initial state of the element generation procedure, which is
+   modified as new elements are generated, is very costly to construct
+   and to store, such as in the [Mersenne
+   Twister](https://en.wikipedia.org/wiki/Mersenne_Twister)
+   pseudo-random number generator.
+   
+2. The sequence represents some volatile, non-reproducible data
+   stream, such as readings from a temperature sensor, or a hardware
+   random number generator.
+   
+## Why Single-Pass Sequences Don't Need a Protocol
+
+Semantically, any single-pass sequence of `T`s can be captured in a
+**generator** function of the form `()->T?`.  Generators avoid the
+impression given by `Sequence` that it can be traversed without
+mutation and by `IteratorProtocol` that it can be independently copied
+and stored.  If the need should arise to build generic systems over
+single-pass sequences, generators would make a fine basis.
+
+To interoperate with algorithms on Collection, it's always possible to
+add multipass capability using an adapter that buffers elements as
+they are visited for the first time (see
+[GeneratorCollection.swift](GeneratorCollection.swift) for an
+example).  But is that cost acceptable?
+
+## The Real Cost of Buffering
+
 - Most volatile data streams end up being backed by buffers, in
   practice.
   
 - Most volatile data streams are tied to I/O and so already incur
   overheads that would dwarf the cost of allocating a backing buffer.
 
-- A generator of the form `()->T?` works just fine if we ever need to
-  describe a single-pass sequence of `T`.  Probably Array should
-  support construction from a generator.
 
-## It's Fine to Allow Collections to be Infinite
+## But Sequences Can be Infinite
 
-- The worst consequence is infinite looping/out-of-memory, neither of
-  which opens a type-safety hole.
+Currently `Collection` models are required to have a finite number of
+elements, but a `Sequence` that is not a `Collection` can be inifinte.
+This requirement is motivated as follows in the documentation:
+
+> The fact that all collections are finite guarantees the safety of
+> many sequence operations, such as using the `contains(_:)` method to
+> test whether a collection includes an element.
+
+It should be noted first off that the comment is misleading at best:
+finiteness does not make any difference to memory safety, which is
+what “safe” means in Swift.  The only possible consequence of allowing
+infinite collections is that some algorithms might run forever or
+exhaust memory, neither of which is a safety problem.
+
+More importantly, though, the motivation is hollow: 
+
+- When it comes to termination or memory exhaustion, there's little
+  practical difference between an infinite collection and one that is
+  simply huge.  We don't have a problem with `0...UInt64.max` as a
+  collection, and yet no reasonable program can process all of its
+  elements.
   
-- We currently don't do anything to prevent that with Sequence.
-  We provide `min()`/`max()`, `starts(with:)`, `elementsEqual()`,
-  and many others that can produce these behaviors.
-  
-- There's little practical difference between an infinite collection
-  and one that is simply huge.  We don't have a problem with
-  `0...UInt64.max` as a collection.
-  
+- The standard library provides *many* `Sequence` algorithms that may
+  never terminate when the target is inifinite: among them,
+  We provide `min()`/`max()`, `starts(with:)`, `elementsEqual()`.
+
+## Costs of `Sequence`
+
+
+- Shadowing
+- Semantic difficulty with mutation
+- `SubSequence` but no slicing
+- API surface
+
+## What's the Alternative
