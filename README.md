@@ -30,7 +30,15 @@ Eliminating the `Sequence` protocol would vastly simplify and shrink
 the standard library, and would remove the footgun implicit in types
 whose non-mutating methods occasionally make silent changes.
 
-## Why do we have `Sequence` and `IteratorProtocol`?
+Lastly, `Sequence` has various `SubSequence`-creation operations.
+These base operations, whose spellings can't involve indices or
+subscripts beceause `Sequence` doesn't support them, “poke through”
+into its refinement, `Collection`. Eliminating `Sequence` would allow
+us to make progress on [unifying these slicing
+APIs](https://forums.swift.org/t/shorthand-for-offsetting-startindex-and-endindex/9397/83)
+under a subscript syntax.
+
+## Why Do We Have `Sequence` and `IteratorProtocol`?
 
 These protocols were originally created to support `for` looping over
 arbitrary sequences.  The code 
