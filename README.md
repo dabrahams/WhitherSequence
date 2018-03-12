@@ -13,8 +13,7 @@ the elements includes the use of `for`...`in` loops, but also methods
 declared to be non-`mutating`—such as `map`, `filter`, and `reduce`-
 that must actually change the value of an arbitrary sequence.  It's
 hard to overstate the harm done to code readability, since code that
-appears to be pure, and usually *is* pure, hides side-effects that
-occur in the general case.
+appears to be pure hides side-effects that occur in the general case.
 
 Because the *vast* majority of `Sequence` models (and all the ones
 supplied by the standard library) support multiple passes, generic
