@@ -1,15 +1,34 @@
 # Let's Retire `Sequence` and `IteratorProtocol`
 
-tldr: `Sequence` and `IteratorProtocol` are not pulling their weight,
-so we should remove them from the language.
+> tldr; `Sequence` and `IteratorProtocol` are not pulling their
+> weight, so we should remove them from the language.
 
+## The Cost of Having `Sequence`
 
-## Costs of `Sequence`
+The biggest problem with `Sequence` is that it is so easily and
+regularly misused.  An arbitrary `Sequence` supports only a single
+traversal, so any generic code (or extension of Sequence) that
+attempts to read the elements multiple times is incorrect.  Reading
+the elements includes the use of `for`...`in` loops, but also methods
+declared to be non-`mutating`—such as `map`, `filter`, and `reduce`-
+that must actually change the value of an arbitrary sequence.  It's
+hard to overstate the harm done to code readability, since code that
+appears to be pure, and usually *is* pure, hides side-effects that
+occur in the general case.
 
-- Shadowing
-- Semantic difficulty with mutation
-- `SubSequence` but no slicing
-- API surface
+Because the *vast* majority of `Sequence` models (and all the ones
+supplied by the standard library) support multiple passes, generic
+code over `Sequence`s is typically never tested with a single-pass
+`Sequence`.  Finally, because it is at the root of the protocol
+hierarchy and has so few requirements, it is very attractive to
+implement `Sequence` where implementing `Collection` would be more
+appropriate.  Making a type conform to `Sequence` instead of
+`Collection` has both efficiency and capability costs for operations
+on that type.
+
+Eliminating the `Sequence` protocol would vastly simplify and shrink
+the standard library, and would remove the footgun implicit in types
+whose non-mutating methods occasionally make silent changes.
 
 ## Why do we have `Sequence` and `IteratorProtocol`?
 
@@ -162,3 +181,23 @@ streams already pay substantial performance costs for their large
 state, I/O, or both.  In the rare instances where this cost is
 unacceptable, algorithms can be refactored and overloaded to use
 generators.  Array initialization is one likely candidate.
+
+## How Would `for` Loops Work?
+
+A `for` loop over a collection would create a `SubSequence` instead of
+an `Iterator`, and repeatedly pop the first element from the front,
+so:
+
+```swift
+for x in c { something(x) }
+```
+
+would be translated as
+
+```swift
+var __i = c[...]
+while let x = __i.popFirst() { something(x) }
+```
+
+This translation is computationally equivalent to the current one that
+uses an associated `Iterator` type.
