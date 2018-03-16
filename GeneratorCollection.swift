@@ -102,6 +102,7 @@ private final class GeneratorBuffer<T>
         first: T,
         rest: ()->T?
     ) -> GeneratorBuffer {
+        print("+ buffer")
         let r = super.create(
             minimumCapacity: max(minimumCapacity, 1)
         ) { _ in Header(_next: nil, access: 0, count: 0) }
@@ -114,6 +115,7 @@ private final class GeneratorBuffer<T>
     private init() { fatalError("do not call me; use create() instead") }
 
     deinit {
+        print("- buffer")
         // deinitialize any elements before we go
         _ = withUnsafeMutablePointerToElements {
             $0.deinitialize(count: header.count)
@@ -335,22 +337,14 @@ extension GeneratorCollection.SubSequence : Collection {
 
 extension GeneratorCollection {
     public func makeIterator() -> Iterator {
-        return Iterator(source: source, position: startIndex)
+        return Iterator(impl: self[...])
     }
     
     public struct Iterator : IteratorProtocol {
-        let source: ()->T?
-        var position: GeneratorCollection.Index
+        var impl: GeneratorCollection.SubSequence
         
         public mutating func next() -> T? {
-            if position == GeneratorCollection.Index() {
-                return nil
-            }
-            let r = position.segment.withUnsafeMutablePointerToElements {
-                $0[position.offsetInSegment]
-            }
-            position.stepForward(pullingFrom: source)
-            return r
+            return impl.popFirst()
         }
     }
 }
@@ -399,7 +393,7 @@ extension GeneratorCollection.Index {
 
         if let first = source() {
             // refill and re-use the same buffer.
-            print("refilling...")
+            print("* recycle")
             segment.fill(first: first, rest: source)
             offsetInSegment = 0
             segmentNumber += 1
@@ -422,27 +416,44 @@ func makeGenerator() -> ()->Int? {
 }
 
 // Build a GeneratorCollection
-let g = GeneratorCollection(source: makeGenerator())
+func testSimple() {
+    print("-> testSimple")
+    var g2: GeneratorCollection<Int>.SubSequence
+    
+    do {
+        let g = GeneratorCollection(source: makeGenerator())
 
-print(Array(g)) // It has the right contents
+        print(Array(g)) // It has the right contents
 
-// Basic indexing operations work.
-print(g[g.index(of: 13)!], g[g.index(of: 14)!], g[g.index(of: 15)!])
-print(g[g.index(of: 28)!], g[g.index(of: 29)!], g[g.index(of: 30)!])
-print(g.index(of: 200) == nil)
+        // Basic indexing operations work.
+        print(g[g.index(of: 13)!], g[g.index(of: 14)!], g[g.index(of: 15)!])
+        print(g[g.index(of: 28)!], g[g.index(of: 29)!], g[g.index(of: 30)!])
+        print(g.index(of: 200) == nil)
+
+        g2 = g[...]
+    }
+    print("dropping elements in groups of 20:")
+    while !g2.isEmpty {
+        print("  current count:", g2.count)
+        g2 = g2.dropFirst(20)
+    }
+    print("<- testSimple")
+}
+
+testSimple()
 
 func testForLoop() {
+    print("-> testForLoop")
     var a: [Int] = []
-    // It looks like Swift doesn't end the lifetime of the GeneratorCollection
-    // early enough (right after the makeIterator() call) to ensure the buffer
-    // gets re-filled.
     for x in GeneratorCollection(source: makeGenerator()) { a.append(x) }
     print(a)
+    print("<- testForLoop")
 }
 
 testForLoop()
 
 func testForLoopTranslation() {
+    print("-> testForLoopTranslation")
     var a: [Int] = []
     // Proposed implementation of
     //
@@ -452,6 +463,7 @@ func testForLoopTranslation() {
 
     // See that we got there
     print(a)
+    print("<- testForLoopTranslation")
 }
 
 testForLoopTranslation()
