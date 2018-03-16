@@ -333,6 +333,27 @@ extension GeneratorCollection.SubSequence : Collection {
     }
 }
 
+extension GeneratorCollection {
+    public func makeIterator() -> Iterator {
+        return Iterator(source: source, position: startIndex)
+    }
+    
+    public struct Iterator : IteratorProtocol {
+        let source: ()->T?
+        var position: GeneratorCollection.Index
+        
+        public mutating func next() -> T? {
+            if position == GeneratorCollection.Index() {
+                return nil
+            }
+            let r = position.segment.withUnsafeMutablePointerToElements {
+                $0[position.offsetInSegment]
+            }
+            position.stepForward(pullingFrom: source)
+            return r
+        }
+    }
+}
 
 extension GeneratorCollection.Index : Comparable {
     public static func == (
@@ -409,6 +430,17 @@ print(Array(g)) // It has the right contents
 print(g[g.index(of: 13)!], g[g.index(of: 14)!], g[g.index(of: 15)!])
 print(g[g.index(of: 28)!], g[g.index(of: 29)!], g[g.index(of: 30)!])
 print(g.index(of: 200) == nil)
+
+func testForLoop() {
+    var a: [Int] = []
+    // It looks like Swift doesn't end the lifetime of the GeneratorCollection
+    // early enough (right after the makeIterator() call) to ensure the buffer
+    // gets re-filled.
+    for x in GeneratorCollection(source: makeGenerator()) { a.append(x) }
+    print(a)
+}
+
+testForLoop()
 
 func testForLoopTranslation() {
     var a: [Int] = []
