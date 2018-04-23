@@ -10,8 +10,10 @@
 //
 
 // Note: Some code below uses Builtin primitives that are normally only
-// available to the standard library.  To build, please add the -parse-stdlib
-// flag to your swift invocation.
+// available to the standard library.
+//
+// To build, please build with -parse-stdlib.  In current Swift, observing
+// buffer recycling depends on passing the -O flag.
 import Swift
 
 //===--- Utilities --------------------------------------------------------===//
@@ -316,10 +318,9 @@ extension GeneratorCollection.SubSequence : Collection {
     public var underestimatedCount: Int {
         return startIndex.segment.header.count - startIndex.offsetInSegment
     }
-    
-    // The following is needed because of https://bugs.swift.org/browse/SR-7167.
-    // Otherwise our "popFirst" rendition of the for...in loop fails to re-use
-    // the same buffer.
+
+    // The following is needed if repeated popFirst calls are to reuse the same
+    // buffer.
     
     /// Removes and returns the first element of the collection.
     ///
@@ -337,16 +338,22 @@ extension GeneratorCollection.SubSequence : Collection {
 
 extension GeneratorCollection {
     public func makeIterator() -> Iterator {
-        return Iterator(impl: self[...])
+        return Iterator(i: startIndex, source: source)
     }
     
     public struct Iterator : IteratorProtocol {
-        var impl: GeneratorCollection.SubSequence
-        
+        var i: Index
+        let source: ()->Element?
+
         public mutating func next() -> T? {
-            return impl.popFirst()
+            guard i != Index() else { return nil }
+            let r = i.segment.withUnsafeMutablePointerToElements {
+                $0[i.offsetInSegment]
+            }
+            i.stepForward(pullingFrom: source)
+            return r
         }
-    }
+    }    
 }
 
 extension GeneratorCollection.Index : Comparable {
@@ -451,22 +458,6 @@ func testForLoop() {
 }
 
 testForLoop()
-
-func testForLoopTranslation() {
-    print("-> testForLoopTranslation")
-    var a: [Int] = []
-    // Proposed implementation of
-    //
-    //    for x in GeneratorCollection(source: makeGenerator()) { a.append(x) }
-    var source = GeneratorCollection(source: makeGenerator())[...]
-    while let x = source.popFirst() { a.append(x) }
-
-    // See that we got there
-    print(a)
-    print("<- testForLoopTranslation")
-}
-
-testForLoopTranslation()
 
 // Local Variables:
 // swift-basic-offset: 4
