@@ -81,7 +81,7 @@ engineering cost associated with changing the way the compiler implemented
 `for`...`in` to interact with a more complicated protocol such as `Collection`,
 we decided that streams sequences deserved their own protocol…  *without ever
 discovering a model that couldn't efficiently support multi-pass traversal*.
-Arguably—for a reasonable definition “efficient”—the
+Arguably—for a reasonable definition of “efficient”—the
 [GeneratorCollection](GeneratorCollection.swift) adapter described below
 demonstrates that no such model exists.
 
