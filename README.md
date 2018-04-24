@@ -1,9 +1,9 @@
-# Let's Repurpose `Sequence`
+# Let's Retire `Sequence`
 
 > TL;DR Evaluated against its documented purpose, `Sequence` is not pulling its
 > weight.  It creates pitfalls for library users and complexity for everyone.
-> That said, defining a `Sequence` is super easy.  We should make `Sequence` into
-> a convenience for defining `Collection`s.
+> That said, defining a `Sequence` is super easy.  We should make it that easy
+> to define a new `Collection`.
 
 ## Costs of `Sequence` In Its Current Form
 
@@ -88,7 +88,7 @@ demonstrates that no such model exists.
 ## But Sequences Can be Infinite
 
 Currently `Collection` models are required to have a finite number of
-elements, but a `Sequence` that is not a `Collection` can be inifinte.
+elements, but a `Sequence` that is not a `Collection` can be infinte.
 This requirement is motivated as follows in the documentation:
 
 > The fact that all collections are finite guarantees the safety of
@@ -134,7 +134,6 @@ let s = Seq()
 print(Array(s)) // [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 print(Array(s)) // [] oops, s was mutated
 ```
-
 A true stream would require significant additional storage or computation to
 support multiple passes over its elements.  There are two known cases:
 
@@ -145,16 +144,25 @@ support multiple passes over its elements.  There are two known cases:
    pseudo-random number generator.
    
 2. The sequence represents some volatile, non-reproducible data stream, such as
-   readings from a temperature sensor, or a hardware random number generator.
-   Even in some of these cases, the lowest levels of the operating system are
-   often buffering input in a way that makes multiple passes possible.
-   
+   readings from a temperature sensor.  In these cases, the lowest levels of the
+   operating system are often buffering input in a way that makes multiple
+   passes possible, and `GeneratorCollection` could easily be used to adapt the
+   others.
+
+
+## The Proposal
+
+I propose we define a default `Index` type for `Collections` that provide an
+`Iterator`, as shown in [Sequence.swift](Sequence.swift), and retiring
+`Sequence`.
+
 ## Migrating Existing Code
 
-Removing `Sequence` would break unacceptable amounts of existing code, so I
-propose replacing it with the protocol defined in
-[Sequence.swift](Sequence.swift), which *refines* `Collection`.  Even so, this
-is a disruptive change, which demands careful mitigation.
+Immediately removing `Sequence` would break unacceptable amounts of existing
+code, so I propose making it into a deprecated typealias for `Collection` as
+shown in [Sequence.swift](Sequence.swift).  Even so, some code *will* break
+(e.g. any extension made for both `Sequence` and `Collection` becomes
+ambiguous), so this change shouldn't be undertaken lightly.
 
 ### Migrating Existing `Sequence` Conformances
 
@@ -172,9 +180,7 @@ for such a test seem to be rare, but there are examples such as `AnyIterator`
 Standard library code that uses `Sequence` as a constraint, but is not already
 and separately present on `Collection`, would be changed to use `Collection`
 instead. `Sequence` constraints in the wild should be changed to `Collection` as
-well.  The immediate need to make this change in user code could be somewhat
-mitigated by temporarily extending all standard library `Collection`s so that they also
-conform to `Sequence`.
+well.
 
 ### Adapting Streams
 
@@ -256,3 +262,8 @@ had forward iteration, had to support it too.  I'm not sure if there are other
 `Collection` methods whose existence there was driven by trying to provide
 maximum functionality for `Sequence`, but this one, at least, should be
 reconsidered.
+
+## Acknowledgements
+
+Special thanks to Nate Cook for his initial implementation of `SequenceIndex`
+and to @bjhomer for his idea of collapsing `Sequence` and `Collection`.
