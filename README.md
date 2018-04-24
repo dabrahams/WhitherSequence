@@ -146,7 +146,7 @@ support multiple passes over its elements.  There are two known cases:
    
 2. The sequence represents some volatile, non-reproducible data stream, such as
    readings from a temperature sensor, or a hardware random number generator.
-   Even in some of these casesd, the lowest levels of the operating system are
+   Even in some of these cases, the lowest levels of the operating system are
    often buffering input in a way that makes multiple passes possible.
    
 ## Migrating Existing Code
