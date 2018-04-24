@@ -40,10 +40,10 @@ func test() {
 //===----------------------------------------------------------------------===//
 
 /// A convenience for simply defining Collections.
-protocol Sequence : Collection {}
+typealias Sequence = Collection
 
 /// Collection conformance
-extension Sequence {
+extension Collection where Index == SequenceIndex<Self> {
   var startIndex: SequenceIndex<Self> {
     return SequenceIndex(self)
   }
