@@ -12,8 +12,7 @@
 // Note: Some code below uses Builtin primitives that are normally only
 // available to the standard library.
 //
-// To build, please build with -parse-stdlib.  In current Swift, observing
-// buffer recycling depends on passing the -O flag.
+// To build, please build with -parse-stdlib.
 import Swift
 
 //===--- Utilities --------------------------------------------------------===//
@@ -433,9 +432,9 @@ func testSimple() {
         print(Array(g)) // It has the right contents
 
         // Basic indexing operations work.
-        print(g[g.index(of: 13)!], g[g.index(of: 14)!], g[g.index(of: 15)!])
-        print(g[g.index(of: 28)!], g[g.index(of: 29)!], g[g.index(of: 30)!])
-        print(g.index(of: 200) == nil)
+        print(g[g.firstIndex(of: 13)!], g[g.firstIndex(of: 14)!], g[g.firstIndex(of: 15)!])
+        print(g[g.firstIndex(of: 28)!], g[g.firstIndex(of: 29)!], g[g.firstIndex(of: 30)!])
+        print(g.firstIndex(of: 200) == nil)
 
         g2 = g[...]
     }
