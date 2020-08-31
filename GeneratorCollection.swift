@@ -12,7 +12,7 @@
 // Note: Some code below uses Builtin primitives that are normally only
 // available to the standard library.
 //
-// To build, please build with -parse-stdlib.
+// To build, please pass -parse-stdlib on the Swift command line.
 import Swift
 
 //===--- Utilities --------------------------------------------------------===//
